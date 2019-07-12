@@ -2,7 +2,7 @@ import h5py
 import numpy as np
 
 
-def extract(fname, n_ch = 4096):
+def extract(fname, n_ch = 4096, time_intervals = 1):
     '''
     Extracts a BrainWave file from quantal data and stores in a chunked HDF5 file.
 
@@ -12,9 +12,13 @@ def extract(fname, n_ch = 4096):
         The name of the file to load. By default, the new file is stored as this
         filename as well, but with a .hdf5 extension.
 
-    n_ch : int
+    n_ch : int    (default 4096)
         The number of channels. Must be a squared integer value.
-        (default 4096)
+
+    time_intervals : float    (default 1)
+        Intervals to partition the recording into. The recording will be
+        extracted interval by interval (reshaping and converting to voltage).
+        Higher values may lead to performance penalties.
 
     Usage
     ----
@@ -29,6 +33,7 @@ def extract(fname, n_ch = 4096):
 
     '''
     new_fname = fname[0:-4] + '.hdf5'
+    n_ch = int(n_ch)
 
     #Load data and create hdf5 to store processed data
     _rec = h5py.File(fname,'r')
@@ -64,8 +69,7 @@ def extract(fname, n_ch = 4096):
     dset_t.attrs['units'] = 'seconds'
 
     ###
-    t_inter = 15
-    t_start = np.arange(0, dt*n_frames, t_inter)
+    t_start = np.arange(0, dt*n_frames, time_intervals)
 
     for ind, _t_start in enumerate(t_start):
         #Define start and end of times for this iteration
@@ -75,8 +79,8 @@ def extract(fname, n_ch = 4096):
             _t_end = t_start[ind + 1]
 
         #Convert to indices
-        _ind_start = int(_t_start * freq_sample) * 4096
-        _ind_end = int(_t_end * freq_sample) * 4096
+        _ind_start = int(_t_start * freq_sample) * n_ch
+        _ind_end = int(_t_end * freq_sample) * n_ch
 
         _ind_t_start = int(_t_start * freq_sample)
         _ind_t_end = int(_t_end * freq_sample)
@@ -87,5 +91,10 @@ def extract(fname, n_ch = 4096):
             n_ch_1d, n_ch_1d, _n_t)
         rec['volt'][:, :, _ind_t_start : _ind_t_end] = \
             (_v * inversion - levels/2) * (v_max - v_min) / levels
+
+        #Print progress
+        progress = ind/len(t_start)*100
+        print('\r' + f'Extracting BRW... {progress:.1f}'
+            + '%', end = '')
 
     return
