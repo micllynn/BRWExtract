@@ -1,7 +1,6 @@
 import h5py
 import numpy as np
 
-
 def extract(fname, n_ch = 4096, time_intervals = 1):
     '''
     Extracts a BrainWave file from quantal data and stores in a chunked HDF5 file.
@@ -57,7 +56,7 @@ def extract(fname, n_ch = 4096, time_intervals = 1):
 
     #Store some data
     dset_volt = rec.create_dataset('volt', (n_ch_1d, n_ch_1d, n_frames),
-        dtype = 'f', chunks = True, compression="gzip")
+        dtype = 'float32', chunks = True, compression="gzip")
     dset_volt.attrs['units'] = 'uV'
     dset_volt.attrs['dim1'] = 'Electrode in x dimension'
     dset_volt.attrs['dim2'] = 'Electrode in y dimension'
@@ -71,6 +70,8 @@ def extract(fname, n_ch = 4096, time_intervals = 1):
     ###
     t_start = np.arange(0, dt*n_frames, time_intervals)
 
+    print('\r' + 'Extracting BRW... 0'
+        + '%', end = '')
     for ind, _t_start in enumerate(t_start):
         #Define start and end of times for this iteration
         if ind == len(t_start) - 1:
@@ -87,14 +88,18 @@ def extract(fname, n_ch = 4096, time_intervals = 1):
         _n_t = _ind_t_end - _ind_t_start
 
         #Store _v and process
-        _v = np.array(_rec['3BData/Raw'][_ind_start : _ind_end]).reshape(
-            n_ch_1d, n_ch_1d, _n_t)
+        _v = np.array(_rec['3BData/Raw'][_ind_start : _ind_end],
+            dtype = 'float32').reshape(n_ch_1d, n_ch_1d, _n_t)
+        _to_add = - 1 * levels/2
+        _to_mult = inversion * (v_max - v_min) / levels
         rec['volt'][:, :, _ind_t_start : _ind_t_end] = \
-            (_v * inversion - levels/2) * (v_max - v_min) / levels
+            (_v + _to_add) * _to_mult
 
         #Print progress
-        progress = ind/len(t_start)*100
+        progress = (ind+1)/len(t_start)*100
         print('\r' + f'Extracting BRW... {progress:.1f}'
             + '%', end = '')
+
+    print('\nExtracted.')
 
     return
