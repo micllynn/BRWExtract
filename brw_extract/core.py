@@ -1,7 +1,12 @@
 import h5py
 import numpy as np
 
-def extract(fname, n_ch = 4096, time_intervals = 1):
+import cProfile, pstats, io
+import multiprocessing as mp
+import time
+
+def extract(fname, t_intervals = 1, t_chunks = 'matched',
+    compression = None, _profile = False, _verbosity = True):
     '''
     Extracts a BrainWave file from quantal data and stores in a chunked HDF5 file.
 
@@ -10,14 +15,22 @@ def extract(fname, n_ch = 4096, time_intervals = 1):
     fname : str
         The name of the file to load. By default, the new file is stored as this
         filename as well, but with a .hdf5 extension.
-
-    n_ch : int    (default 4096)
-        The number of channels. Must be a squared integer value.
-
-    time_intervals : float    (default 1)
+    t_intervals : float    (default 1), optional
         Intervals to partition the recording into. The recording will be
         extracted interval by interval (reshaping and converting to voltage).
         Higher values may lead to performance penalties.
+    t_chunks : int, 'matched' or False, optional
+        If int, data is chunked in slabs of (n_ch, n_ch, t_chunks). If
+        'matched', data is chunked in slabs of (n_ch, n_ch, t_intervals). If
+        False, data is not chunked.
+    compression : str, 'gzip' or 'lzf' or None
+    compression_level :
+    _profile : boolean, optional
+        Whether to enable cProfiling within the function for performance
+        optimization. If True, returns a pstats.Stats object containing stats.
+    _verbosity : boolean, optional
+        Sets verbosity level of extraction.
+
 
     Usage
     ----
@@ -28,11 +41,17 @@ def extract(fname, n_ch = 4096, time_intervals = 1):
     >> rec = h5py.File('recording.hdf5', 'r')
     >> rec['volt'][0, 0, :] #Retrieve electrode[0, 0]'s voltage waveform
         #through time
-    >> rec['time'][5] #Retrieve time, in seconds, at index 5.
+    >> rec['time'][:] #Retrieve vector of all sample times in seconds.
 
     '''
+    if _profile is True:
+        pr = cProfile.Profile()
+        pr.enable()
+
+    if t_chunks is 'matched':
+        t_chunks = t_intervals
+
     new_fname = fname[0:-4] + '.hdf5'
-    n_ch = int(n_ch)
 
     #Load data and create hdf5 to store processed data
     _rec = h5py.File(fname,'r')
@@ -40,7 +59,8 @@ def extract(fname, n_ch = 4096, time_intervals = 1):
 
     #Extract recording parameters from the HDF5
     n_frames = _rec['3BRecInfo/3BRecVars/NRecFrames'][0]
-    n_ch_1d = np.sqrt(n_ch).astype(np.int)
+    n_ch_x = _rec['3BRecInfo/3BMeaChip/NRows'][0]
+    n_ch_y = _rec['3BRecInfo/3BMeaChip/NCols'][0]
     n_xyt = len(_rec['3BData/Raw'])
 
     freq_sample = _rec['3BRecInfo/3BRecVars/SamplingRate'][0]
@@ -55,23 +75,33 @@ def extract(fname, n_ch = 4096, time_intervals = 1):
     levels = 2**n_bits
 
     #Store some data
-    dset_volt = rec.create_dataset('volt', (n_ch_1d, n_ch_1d, n_frames),
-        dtype = 'float32', chunks = True, compression="gzip")
-    dset_volt.attrs['units'] = 'uV'
-    dset_volt.attrs['dim1'] = 'Electrode in x dimension'
-    dset_volt.attrs['dim2'] = 'Electrode in y dimension'
-    dset_volt.attrs['dim3'] = 'Time'
+    if t_chunks is not False:
+        dset_volt = rec.create_dataset('volt', (n_ch_x, n_ch_y, n_frames),
+            dtype = 'float32', chunks = (n_ch_x, n_ch_y, t_chunks),
+            compression = compression)
+    else:
+        dset_volt = rec.create_dataset('volt', (n_ch_x, n_ch_y, n_frames),
+            dtype = 'float32', chunks = False, compression = compression)
 
+    dset_volt.attrs['units'] = 'uV'
+    dset_volt.attrs['sampling rate'] = freq_sample
+    dset_volt.attrs['dim0'] = 'Electrode num. in x dimension'
+    dset_volt.attrs['dim1'] = 'Electrode num. in y dimension'
+    dset_volt.attrs['dim2'] = 'Time index'
 
     time = np.arange(0, dt*n_frames, dt)
     dset_t = rec.create_dataset('time', (n_frames,), data = time)
     dset_t.attrs['units'] = 'seconds'
+    dset_t.attrs['sampling rate'] = freq_sample
 
     ###
-    t_start = np.arange(0, dt*n_frames, time_intervals)
+    t_start = np.arange(0, dt*n_frames, t_intervals)
 
-    print('\r' + 'Extracting BRW... 0'
-        + '%', end = '')
+    dset_raw = _rec['3BData/Raw']
+
+    print(f'-----\nFile: {fname}')
+    print('\r\t' + 'Extracting BRW... 0.0%', end = '')
+
     for ind, _t_start in enumerate(t_start):
         #Define start and end of times for this iteration
         if ind == len(t_start) - 1:
@@ -80,26 +110,88 @@ def extract(fname, n_ch = 4096, time_intervals = 1):
             _t_end = t_start[ind + 1]
 
         #Convert to indices
-        _ind_start = int(_t_start * freq_sample) * n_ch
-        _ind_end = int(_t_end * freq_sample) * n_ch
+        _ind_start = int(_t_start * freq_sample) * n_ch_x*n_ch_y
+        _ind_end = int(_t_end * freq_sample) * n_ch_x*n_ch_y
 
         _ind_t_start = int(_t_start * freq_sample)
         _ind_t_end = int(_t_end * freq_sample)
         _n_t = _ind_t_end - _ind_t_start
 
         #Store _v and process
-        _v = np.array(_rec['3BData/Raw'][_ind_start : _ind_end],
-            dtype = 'float32').reshape(n_ch_1d, n_ch_1d, _n_t)
+        _v = np.array(dset_raw[_ind_start : _ind_end],
+            dtype = 'float').reshape(n_ch_x, n_ch_y, _n_t)
         _to_add = - 1 * levels/2
         _to_mult = inversion * (v_max - v_min) / levels
-        rec['volt'][:, :, _ind_t_start : _ind_t_end] = \
-            (_v + _to_add) * _to_mult
+
+        dset_volt.write_direct((_v + _to_add) * _to_mult,
+            dest_sel=(np.s_[:, :, _ind_t_start : _ind_t_end]))
 
         #Print progress
         progress = (ind+1)/len(t_start)*100
-        print('\r' + f'Extracting BRW... {progress:.1f}'
-            + '%', end = '')
+        print('\r\t' + f'Extracting BRW... {progress:.1f}%', end = '')
 
-    print('\nExtracted.')
+    print('\n\tExtracted.')
 
-    return
+    if _profile is True:
+        pr.disable()
+
+        s = io.StringIO()
+        ps = pstats.Stats(pr, stream = s).sort_stats('cumulative')
+        ps.print_stats()
+        print(s.getvalue())
+
+        return ps
+
+    else:
+        return
+
+def mp_extract(files, timeit = False, **kwargs):
+    """Function which is a multiprocessing wrapper for extract() and takes all
+    kwargs associated with that function.
+
+    Parameters
+    ---------
+    files : list
+        A list of filename strings to extract.
+    **kwargs : dict
+        A dictionary of kwargs to pass to extract().
+
+    Returns
+    --------
+    """
+    if timeit is True:
+        t_start = time.time()
+
+    n_cores = mp.cpu_count()
+    n_files = len(files)
+
+    print(f'Extracting {n_files} files on {n_cores} cores... ')
+
+    #Start jobs
+    jobs = []
+    for ind in range(n_files):
+        jobs.append(mp.Process(target = extract, args = (files[ind],),
+            kwargs = kwargs))
+        jobs[ind].start()
+
+    #Wait for all jobs to end
+    for ind in range(n_files):
+        jobs[ind].join()
+
+    if timeit is True:
+        t_end = time.time()
+        t_tot = t_end - t_start
+        print('time elapsed: ' + str(t_tot) + 's')
+
+
+#
+# fnames = ['Slice3_Baseline.brw', 'Slice3_Baseline2.brw']
+# kwargs = {'t_intervals' : 5, 't_chunks' : 'matched', 'compression' : 'lzf',
+#     '_profile' : False}
+# mp_extract(fnames, timeit = True, **kwargs)
+#
+# #
+
+fname = 'Slice3_Baseline.brw'
+ps = extract(fname, t_intervals = 5, t_chunks = 'matched',
+    compression = 'lzf', _profile = True)
