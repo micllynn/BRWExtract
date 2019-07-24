@@ -140,13 +140,12 @@ def extract(fname, t_intervals = 1, t_chunks = 'matched',
             dset_volt.write_direct((_v + _to_add) * _to_mult,
                 dest_sel=(np.s_[:, :, _ind_t_start : _ind_t_end]))
 
-            if ind is 0:
-                _timer = time.time()
-                t_est = (_timer - _timer0) * len(t_start)
-
             #Print progress
+            _timer = time.time()
+            _t_step = (_timer - _timer0)
+
             progress = (ind+1)/len(t_start)*100
-            curr_t_est = t_est - (ind/len(t_start))*t_est
+            curr_t_est = _t_step * (len(t_start)-(ind+1))
             print('\r\t' + f'Extracting... {progress:.1f}%' \
                 + f'  |  Time remaining... {curr_t_est:.1f}s   ', end = '')
 
