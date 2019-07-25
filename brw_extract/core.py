@@ -1,4 +1,4 @@
-import os, sys, io
+import os, sys, io, datetime
 
 import h5py
 import numpy as np
@@ -7,7 +7,7 @@ import cProfile, pstats, time
 import multiprocessing as mp
 
 def extract(fname, t_intervals = 1, t_chunks = 'matched',
-    compression = None, _profile = False, _verbosity = True):
+    compression = 'lzf', _profile = False, _verbosity = True):
     '''
     Extracts a BrainWave file from quantal data and stores in a chunked HDF5 file.
 
@@ -86,7 +86,10 @@ def extract(fname, t_intervals = 1, t_chunks = 'matched',
         n_bits = _rec['3BRecInfo/3BRecVars/BitDepth'][0]
         levels = 2**n_bits
 
-        #Store some data
+        levels_to_v_add = - 1 * levels/2
+        levels_to_v_mult = inversion * (v_max - v_min) / levels
+
+        #Store simple data (not voltage)
         if t_chunks is not False:
             dset_volt = rec.create_dataset('volt', (n_ch_x, n_ch_y, n_frames),
                 dtype = 'float32', chunks = (n_ch_x, n_ch_y, t_chunks),
@@ -106,50 +109,55 @@ def extract(fname, t_intervals = 1, t_chunks = 'matched',
         dset_t.attrs['units'] = 'seconds'
         dset_t.attrs['sampling rate'] = freq_sample
 
-        ###
-        t_start = np.arange(0, dt*n_frames, t_intervals)
-
+        ##################
+        #Extract the brw voltage trace and place it in an .hdf5 dataset
+        ##################
         dset_raw = _rec['3BData/Raw']
+
+        chunk_size_t = np.argmin(np.abs(time_array - t_intervals))
+        chunk_size = int(chunk_size_t * n_ch_x * n_ch_y)
+        chunk_bookends = np.append(np.arange(0, len(dset_raw),
+            chunk_size), len(dset_raw))
 
         print(f'-----\nFile: {fname_path}')
         print('\r\t' + 'Extracting BRW... 0.0%', end = '')
 
-        _timer0 = time.time()
+        _start_t = 0
+        for ind, _start in enumerate(chunk_bookends[:-1]):
+            _timer_start = time.time()
 
-        for ind, _t_start in enumerate(t_start):
-            #Define start and end of times for this iteration
-            if ind == len(t_start) - 1:
-                _t_end = dt*n_frames
-            else:
-                _t_end = t_start[ind + 1]
+            #Define end time and reshaped t for this iteration
+            _end = int(chunk_bookends[ind+1])
+            _chunk_size_t = int((_end - _start) / (n_ch_x * n_ch_y))
 
-            #Convert to indices
-            _ind_start = int(_t_start * freq_sample) * n_ch_x*n_ch_y
-            _ind_end = int(_t_end * freq_sample) * n_ch_x*n_ch_y
+            #**Store _v and process. 1. reshape into correct (t, x, y) dims.
+            #2. Change axis order from (t, x, y) to (x, y, t), necessitating
+            #two .swapaxes calls. More memory-efficient to do all at once.
+            _v = np.array(dset_raw[_start : _end],
+                dtype = 'float').reshape(_chunk_size_t, n_ch_x, n_ch_y) \
+                .swapaxes(0, 2).swapaxes(0, 1)
 
-            _ind_t_start = int(_t_start * freq_sample)
-            _ind_t_end = int(_t_end * freq_sample)
-            _n_t = _ind_t_end - _ind_t_start
+            dset_volt[:, :, _start_t : _start_t + _chunk_size_t] = \
+                (_v + levels_to_v_add) * levels_to_v_mult
 
-            #Store _v and process
-            _v = np.array(dset_raw[_ind_start : _ind_end],
-                dtype = 'float').reshape(n_ch_x, n_ch_y, _n_t)
-            _to_add = - 1 * levels/2
-            _to_mult = inversion * (v_max - v_min) / levels
-
-            dset_volt.write_direct((_v + _to_add) * _to_mult,
-                dest_sel=(np.s_[:, :, _ind_t_start : _ind_t_end]))
+            _start_t += _chunk_size_t #Update start vars
 
             #Print progress
-            _timer = time.time()
-            _t_step = (_timer - _timer0)
+            _t_step = (time.time() - _timer_start)
 
-            progress = (ind+1)/len(t_start)*100
-            curr_t_est = _t_step * (len(t_start)-(ind+1))
-            print('\r\t' + f'Extracting... {progress:.1f}%' \
-                + f'  |  Time remaining... {curr_t_est:.1f}s   ', end = '')
+            progress = (ind+1)/len(chunk_bookends)*100
+            curr_t_est_raw = _t_step * (len(chunk_bookends)-(ind+1))
+            curr_t_est_fmat = str(datetime.timedelta(seconds=curr_t_est_raw))
+            curr_t_est = curr_t_est_fmat[0:1] + 'h:' + curr_t_est_fmat[2:4] + \
+                'm:' + curr_t_est_fmat[5:7] + 's'
 
-        print('\n\tExtracted.')
+
+            _pr = '\r\t' + f'Extracting... {progress:.1f}%' \
+                + f'  |  Time remaining... ' + curr_t_est
+            print(_pr, end = '')
+
+        _pr_end = '\r\t** Extracted.' + ' ' * len(_pr)
+        print(_pr_end)
 
         if _profile is True:
             pr.disable()
@@ -162,11 +170,13 @@ def extract(fname, t_intervals = 1, t_chunks = 'matched',
             return ps
 
         else:
-            return
+            return locals()
 
 def mp_extract(files, timeit = False, **kwargs):
     """Function which is a multiprocessing wrapper for extract() and takes all
     kwargs associated with that function.
+
+    In progress - does not offer any real speedup versus extract().
 
     Parameters
     ---------
