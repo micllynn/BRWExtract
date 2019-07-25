@@ -33,3 +33,7 @@ Opening extracted .hdf5 files:
 Multiple parameters can be set during extraction. <code>t_intervals</code> sets the time interval of chunks which are extracted sequentially (default 1 second). <code>t_chunks</code> sets whether the chunk size in the saved hdf5 file match the extracted chunk size ('matched'); alternatively, a precise chunk size in seconds can be set. <code>compression</code> can be 'lzf' or 'gzip'; lzf is slightly faster but offers less compression.
 
 Full params can be viewed with <code>help(brex.extract)</code>
+<<<<<<< HEAD
+=======
+```
+>>>>>>> ca4045f04818df10ed5b5040fe8752628d4c5442
