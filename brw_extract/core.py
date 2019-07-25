@@ -170,7 +170,7 @@ def extract(fname, t_intervals = 1, t_chunks = 'matched',
             return ps
 
         else:
-            return locals()
+            return
 
 def mp_extract(files, timeit = False, **kwargs):
     """Function which is a multiprocessing wrapper for extract() and takes all
