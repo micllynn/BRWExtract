@@ -1,6 +1,6 @@
 # BRWExtract #
 
-BRWExtract is an automated tool for reading multielectrode array data from .brw (BrainWave) files, parsing the raw quantal data into voltages for each channel, and writing to an (open-source) .hdf5 file.
+BRWExtract is an automated tool for reading multielectrode array data from .brw (BrainWave) files. It parses the raw quantal data into voltages for each channel, reshapes into channels, and writes to an (open-source) .hdf5 file with metadata embedded.
 
 
 ## Prerequisites ##
@@ -10,7 +10,7 @@ BRWExtract requires h5py and numpy.
 
 ## Basic usage ##
 
-First, place any data in the /data folder within brw_extract. Then, individual files can be extracted like so:
+First, place data in the /data folder within /brw_extract/. Then, the <code>run.py</code> script provides a convenient tool for extraction:
 ```python
 import brw_extract as brex
 
@@ -32,7 +32,4 @@ Opening extracted .hdf5 files:
 
 Multiple parameters can be set during extraction. <code>t_intervals</code> sets the time interval of chunks which are extracted sequentially (default 1 second). <code>t_chunks</code> sets whether the chunk size in the saved hdf5 file match the extracted chunk size ('matched'); alternatively, a precise chunk size in seconds can be set. <code>compression</code> can be 'lzf' or 'gzip'; lzf is slightly faster but offers less compression.
 
-Full params:
-```python
->>> help(brex.extract)
-```
+Full params can be viewed with <code>help(brex.extract)</code>
