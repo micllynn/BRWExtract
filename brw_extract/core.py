@@ -6,7 +6,7 @@ import numpy as np
 import cProfile, pstats, time
 import multiprocessing as mp
 
-def extract(fname, t_intervals = 1, t_chunks = 'matched',
+def extract(fname, file_path = None, file_path_output = None ,t_intervals = 1, t_chunks = 'matched',
     compression = 'lzf', _profile = False, _verbosity = True):
     '''
     Extracts a BrainWave file from quantal data and stores in a chunked HDF5 file.
@@ -16,14 +16,18 @@ def extract(fname, t_intervals = 1, t_chunks = 'matched',
     fname : str
         The name of the file to load. By default, the new file is stored as this
         filename as well, but with a .hdf5 extension.
+    file_path : str or None
+        The path of the file to load. If file_path is none, will get cwd and data folder.
+    file_path_output : str or None
+        The path of the file to output. If file_path is none, will get cwd and data folder.
     t_intervals : float    (default 1), optional
         Intervals to partition the recording into. The recording will be
         extracted interval by interval (reshaping and converting to voltage).
         Higher values may lead to performance penalties.
-    t_chunks : int, 'matched' or False, optional
+    t_chunks : int, 'matched' or True or False, optional
         If int, data is chunked in slabs of (n_ch, n_ch, t_chunks). If
         'matched', data is chunked in slabs of (n_ch, n_ch, t_intervals). If
-        False, data is not chunked.
+        False, data is not chunked. If True, data is autochunked.
     compression : str, 'gzip' or 'lzf' or None
     compression_level :
     _profile : boolean, optional
@@ -53,18 +57,17 @@ def extract(fname, t_intervals = 1, t_chunks = 'matched',
     if t_chunks is 'matched':
         t_chunks = t_intervals
 
-    #Check fpath and sys
-    cwd = os.getcwd()
+    # If no file_path is given
+    if file_path == None:
+        file_path = os.path.join(os.getcwd(), 'data')
+    fname_path = os.path.join(file_path, fname)
 
-    #OS test
-    platform = sys.platform
-    if platform is 'darwin' or 'linux':
-        fname_path = cwd + '/data/' + fname
-    elif platform is 'win32' or 'win64':
-        fname_path = cwd + '\\data\\' + fname
-
-
-    new_fname_path = fname_path[0:-4] + '.hdf5'
+    # If no file_path_output is given
+    if file_path_output == None:
+        new_fname_path = os.path.splitext(fname_path)[0] + '.hdf5'
+    else:
+        fname_noext = os.path.splitext(fname)[0] + '.hdf5'
+        new_fname_path = os.path.join(file_path_output, fname_noext)
 
     #Load data and create hdf5 to store processed data
     with h5py.File(fname_path,'r') as _rec, h5py.File(new_fname_path, 'w') as rec:
@@ -90,13 +93,13 @@ def extract(fname, t_intervals = 1, t_chunks = 'matched',
         levels_to_v_mult = inversion * (v_max - v_min) / levels
 
         #Store simple data (not voltage)
-        if t_chunks is not False:
+        if type(t_chunks) is bool:
+            dset_volt = rec.create_dataset('volt', (n_ch_x, n_ch_y, n_frames),
+                dtype = 'float32', chunks = t_chunks, compression = compression)
+        else:
             dset_volt = rec.create_dataset('volt', (n_ch_x, n_ch_y, n_frames),
                 dtype = 'float32', chunks = (n_ch_x, n_ch_y, t_chunks),
                 compression = compression)
-        else:
-            dset_volt = rec.create_dataset('volt', (n_ch_x, n_ch_y, n_frames),
-                dtype = 'float32', chunks = False, compression = compression)
 
         dset_volt.attrs['units'] = 'uV'
         dset_volt.attrs['sampling rate'] = freq_sample
