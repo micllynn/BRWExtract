@@ -1,8 +1,5 @@
-.DS_Store
-brw_extract/__pycache__/
-*.brw
-*.hdf5
-/brw_extract/_old*
-/data/*.hdf5
-/data/*.brw
-/data/*.mat
+*
+!/brw_extract/*
+!.gitignore
+!README.md
+!run.py
